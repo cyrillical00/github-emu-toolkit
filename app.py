@@ -178,7 +178,15 @@ if connect:
                     st.session_state.app_count = None
                     st.sidebar.success(f"Connected: {info['login']}")
                 except Exception as e:
-                    st.sidebar.error(f"Connection failed: {e}")
+                    code = getattr(getattr(e, "response", None), "status_code", None)
+                    if code == 401:
+                        st.sidebar.error("Connection failed: invalid or expired PAT.")
+                    elif code == 404:
+                        st.sidebar.error("Connection failed: organization not found.")
+                    elif code == 403:
+                        st.sidebar.error("Connection failed: PAT lacks required scopes (repo, read:org).")
+                    else:
+                        st.sidebar.error("Connection failed. Check your org name and PAT.")
                     st.session_state.connected = False
 
 if st.session_state.connected:
@@ -230,7 +238,8 @@ if st.session_state.connected:
                     st.session_state.outside_collabs = fetch_outside_collaborators(org, token)
                     st.session_state.app_count = fetch_app_installations(org, token)
                 except Exception as e:
-                    st.error(f"Error fetching repos: {e}")
+                    code = getattr(getattr(e, "response", None), "status_code", None)
+                    st.error(f"Failed to fetch repos (HTTP {code})." if code else "Failed to fetch repos. Check PAT scopes.")
         df = st.session_state.repo_df
 
     if df is not None:
@@ -285,7 +294,8 @@ if st.session_state.connected:
                     ]
                     st.session_state.team_df = pd.DataFrame(team_rows)
                 except Exception as e:
-                    st.error(f"Error fetching teams: {e}")
+                    code = getattr(getattr(e, "response", None), "status_code", None)
+                    st.error(f"Failed to fetch teams (HTTP {code})." if code else "Failed to fetch teams. Check PAT scopes.")
         tdf = st.session_state.team_df
         show_teams = tdf is not None
 
