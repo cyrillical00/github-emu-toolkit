@@ -2,6 +2,10 @@ import streamlit as st
 import requests
 import pandas as pd
 import time as time_module
+from utils.mock_data import (
+    MOCK_ORG, MOCK_REPOS, MOCK_TEAMS,
+    MOCK_OUTSIDE_COLLABORATORS, MOCK_APP_COUNT,
+)
 
 st.set_page_config(page_title="GitHub EMU Toolkit", page_icon="🐙", layout="wide")
 
@@ -10,9 +14,16 @@ st.sidebar.markdown("Pre-flight inventory and runbook generator for GitHub → E
 st.sidebar.markdown("---")
 st.sidebar.subheader("Connection")
 
-org_input = st.sidebar.text_input("GitHub organization name")
-token_input = st.sidebar.text_input("GitHub PAT", type="password")
-connect = st.sidebar.button("Connect", type="primary")
+demo_mode = st.sidebar.toggle("Demo mode (no credentials needed)", value=True)
+
+if not demo_mode:
+    org_input = st.sidebar.text_input("GitHub organization name")
+    token_input = st.sidebar.text_input("GitHub PAT", type="password")
+    connect = st.sidebar.button("Connect", type="primary")
+else:
+    org_input = MOCK_ORG["login"]
+    token_input = ""
+    connect = True
 
 BASE_URL = "https://api.github.com"
 
@@ -101,69 +112,131 @@ def fetch_app_installations(org, token):
     return r.json().get("total_count", 0) if r.status_code == 200 else 0
 
 
-# Session state
-for key in ("connected", "org_info", "org", "token", "repo_df", "team_df", "risk_flags"):
+def build_repo_df_from_mock():
+    rows = []
+    for repo in MOCK_REPOS:
+        rows.append({
+            "Repo": repo["name"],
+            "Visibility": repo["visibility"],
+            "Default Branch": repo["default_branch"],
+            "Last Pushed": repo["pushed_at"][:10],
+            "Stars": repo["stargazers_count"],
+            "Has Actions": "Yes" if repo["has_actions"] else "No",
+            "Has Webhooks": "Yes" if repo["has_webhooks"] else "No",
+            "Archived": "Yes" if repo["archived"] else "No",
+        })
+    return pd.DataFrame(rows)
+
+
+def build_team_df_from_mock():
+    return pd.DataFrame([
+        {
+            "Team": t["name"],
+            "Members": t["members_count"],
+            "Repos": t["repos_count"],
+            "Privacy": t["privacy"],
+        }
+        for t in MOCK_TEAMS
+    ])
+
+
+# Session state init
+for key in ("connected", "org_info", "org", "token", "repo_df", "team_df",
+            "risk_flags", "outside_collabs", "app_count", "is_demo"):
     if key not in st.session_state:
         st.session_state[key] = None
 if st.session_state.connected is None:
     st.session_state.connected = False
 
-if connect and org_input and token_input:
-    with st.spinner("Connecting to GitHub..."):
-        try:
-            info = validate_connection(org_input, token_input)
-            st.session_state.connected = True
-            st.session_state.org_info = info
-            st.session_state.org = org_input
-            st.session_state.token = token_input
-            st.sidebar.success(f"Connected: {info['login']}")
-        except Exception as e:
-            st.sidebar.error(f"Connection failed: {e}")
-            st.session_state.connected = False
+if connect:
+    if demo_mode:
+        st.session_state.connected = True
+        st.session_state.org_info = MOCK_ORG
+        st.session_state.org = MOCK_ORG["login"]
+        st.session_state.token = None
+        st.session_state.is_demo = True
+        st.session_state.repo_df = build_repo_df_from_mock()
+        st.session_state.team_df = build_team_df_from_mock()
+        st.session_state.outside_collabs = MOCK_OUTSIDE_COLLABORATORS
+        st.session_state.app_count = MOCK_APP_COUNT
+        st.sidebar.success(f"Demo mode: {MOCK_ORG['name']}")
+    else:
+        if not org_input or not token_input:
+            st.sidebar.error("Enter org name and PAT.")
+        else:
+            with st.spinner("Connecting to GitHub..."):
+                try:
+                    info = validate_connection(org_input, token_input)
+                    st.session_state.connected = True
+                    st.session_state.org_info = info
+                    st.session_state.org = org_input
+                    st.session_state.token = token_input
+                    st.session_state.is_demo = False
+                    st.session_state.repo_df = None
+                    st.session_state.team_df = None
+                    st.session_state.outside_collabs = None
+                    st.session_state.app_count = None
+                    st.sidebar.success(f"Connected: {info['login']}")
+                except Exception as e:
+                    st.sidebar.error(f"Connection failed: {e}")
+                    st.session_state.connected = False
 
 if st.session_state.connected:
     org = st.session_state.org
-    token = st.session_state.token
+    is_demo = st.session_state.is_demo
     info = st.session_state.org_info
+    token = st.session_state.token
 
     total_repos = (info.get("public_repos") or 0) + (info.get("total_private_repos") or 0)
-    st.sidebar.metric("Repos", total_repos)
+    st.sidebar.metric("Repos (sample)", len(MOCK_REPOS) if is_demo else total_repos)
 
-    st.title(f"GitHub EMU Toolkit — {org}")
+    st.title(f"GitHub EMU Toolkit — {info.get('name', org)}")
+
+    if is_demo:
+        st.info(
+            "**Demo mode** — showing a representative 50-repo sample modelled on a 600-user, "
+            "2,300-repo Life360-scale migration. Toggle off in the sidebar to connect a real org."
+        )
 
     # Section 2: Repository Inventory
     st.subheader("Repository Inventory")
-    if st.button("Fetch Repository Inventory"):
-        with st.spinner("Fetching repos — this may take a while for large orgs..."):
-            try:
-                raw_repos = fetch_repos(org, token)
-                rows = []
-                progress = st.progress(0)
-                for i, repo in enumerate(raw_repos):
-                    name = repo["name"]
-                    actions = has_actions(org, name, token)
-                    webhooks = has_webhooks(org, name, token)
-                    rows.append({
-                        "Repo": name,
-                        "Visibility": repo.get("visibility", "unknown"),
-                        "Default Branch": repo.get("default_branch", ""),
-                        "Last Pushed": (repo.get("pushed_at") or "")[:10],
-                        "Stars": repo.get("stargazers_count", 0),
-                        "Has Actions": "Yes" if actions else "No",
-                        "Has Webhooks": "Yes" if webhooks else "No",
-                        "Archived": "Yes" if repo.get("archived") else "No",
-                    })
-                    progress.progress((i + 1) / len(raw_repos))
-                    time_module.sleep(0.05)
-                st.session_state.repo_df = pd.DataFrame(rows)
-            except Exception as e:
-                st.error(f"Error fetching repos: {e}")
 
-    if st.session_state.repo_df is not None:
+    if is_demo:
         df = st.session_state.repo_df
+    else:
+        if st.button("Fetch Repository Inventory"):
+            with st.spinner("Fetching repos — this may take a while for large orgs..."):
+                try:
+                    raw_repos = fetch_repos(org, token)
+                    rows = []
+                    progress = st.progress(0)
+                    for i, repo in enumerate(raw_repos):
+                        name = repo["name"]
+                        actions = has_actions(org, name, token)
+                        webhooks = has_webhooks(org, name, token)
+                        rows.append({
+                            "Repo": name,
+                            "Visibility": repo.get("visibility", "unknown"),
+                            "Default Branch": repo.get("default_branch", ""),
+                            "Last Pushed": (repo.get("pushed_at") or "")[:10],
+                            "Stars": repo.get("stargazers_count", 0),
+                            "Has Actions": "Yes" if actions else "No",
+                            "Has Webhooks": "Yes" if webhooks else "No",
+                            "Archived": "Yes" if repo.get("archived") else "No",
+                        })
+                        progress.progress((i + 1) / len(raw_repos))
+                        time_module.sleep(0.05)
+                    st.session_state.repo_df = pd.DataFrame(rows)
+                    st.session_state.outside_collabs = fetch_outside_collaborators(org, token)
+                    st.session_state.app_count = fetch_app_installations(org, token)
+                except Exception as e:
+                    st.error(f"Error fetching repos: {e}")
+        df = st.session_state.repo_df
+
+    if df is not None:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Repos", len(df))
-        c2.metric("Private", (df["Visibility"] == "private").sum())
+        c2.metric("Private / Internal", (df["Visibility"].isin(["private", "internal"])).sum())
         c3.metric("Has Actions", (df["Has Actions"] == "Yes").sum())
         c4.metric("Has Webhooks", (df["Has Webhooks"] == "Yes").sum())
 
@@ -171,8 +244,9 @@ if st.session_state.connected:
             "Visibility", ["public", "private", "internal"],
             default=["public", "private", "internal"],
         )
-        actions_only = st.checkbox("Only repos with Actions")
-        no_archived = st.checkbox("Exclude archived")
+        col_a, col_b = st.columns(2)
+        actions_only = col_a.checkbox("Only repos with Actions")
+        no_archived = col_b.checkbox("Exclude archived")
 
         filtered = df[df["Visibility"].isin(vis_filter)]
         if actions_only:
@@ -190,25 +264,32 @@ if st.session_state.connected:
 
     # Section 3: Team Mapping
     st.subheader("Team & Member Mapping")
-    if st.button("Fetch Teams"):
-        with st.spinner("Fetching teams..."):
-            try:
-                teams = fetch_teams(org, token)
-                team_rows = [
-                    {
-                        "Team": t["name"],
-                        "Members": t.get("members_count", 0),
-                        "Repos": t.get("repos_count", 0),
-                        "Privacy": t.get("privacy", ""),
-                    }
-                    for t in teams
-                ]
-                st.session_state.team_df = pd.DataFrame(team_rows)
-            except Exception as e:
-                st.error(f"Error fetching teams: {e}")
 
-    if st.session_state.team_df is not None:
+    if is_demo:
         tdf = st.session_state.team_df
+        show_teams = True
+    else:
+        show_teams = False
+        if st.button("Fetch Teams"):
+            with st.spinner("Fetching teams..."):
+                try:
+                    teams = fetch_teams(org, token)
+                    team_rows = [
+                        {
+                            "Team": t["name"],
+                            "Members": t.get("members_count", 0),
+                            "Repos": t.get("repos_count", 0),
+                            "Privacy": t.get("privacy", ""),
+                        }
+                        for t in teams
+                    ]
+                    st.session_state.team_df = pd.DataFrame(team_rows)
+                except Exception as e:
+                    st.error(f"Error fetching teams: {e}")
+        tdf = st.session_state.team_df
+        show_teams = tdf is not None
+
+    if show_teams and tdf is not None:
         st.dataframe(tdf, use_container_width=True, hide_index=True)
         high_access = tdf[tdf["Repos"] > 10]
         if not high_access.empty:
@@ -225,38 +306,29 @@ if st.session_state.connected:
 
     # Section 4: Pre-Flight Risk Flags
     st.subheader("Pre-Flight Risk Flags")
-    if st.session_state.repo_df is not None:
-        df = st.session_state.repo_df
+    if df is not None:
         flags = []
         public_count = (df["Visibility"] == "public").sum()
         wh_count = (df["Has Webhooks"] == "Yes").sum()
         act_count = (df["Has Actions"] == "Yes").sum()
+        outside = st.session_state.outside_collabs or []
+        app_count = st.session_state.app_count or 0
 
         if public_count > 0:
-            flags.append(("error", f"{public_count} public repo(s) detected — confirm before EMU "
-                          "(repos become private or internal in EMU by default)"))
+            flags.append(("error", f"{public_count} public repo(s) detected — all repos become "
+                          "private or internal in EMU by default; confirm each is intentional"))
         if wh_count > 0:
             flags.append(("warning", f"{wh_count} repos have webhooks — audit external service "
-                          "dependencies before migration"))
+                          "dependencies before migration; webhooks must be recreated in EMU org"))
         if act_count > 0:
-            flags.append(("warning", f"{act_count} repos use GitHub Actions — verify Actions secrets "
-                          "and environment variables are documented"))
-
-        try:
-            outside = fetch_outside_collaborators(org, token)
-            if outside:
-                flags.append(("error", f"{len(outside)} outside collaborator(s) detected — "
-                              "cannot migrate to EMU; must convert to org members or remove"))
-        except Exception:
-            pass
-
-        try:
-            app_count = fetch_app_installations(org, token)
-            if app_count > 0:
-                flags.append(("warning", f"{app_count} GitHub App(s) installed — verify EMU "
-                              "org compatibility for each app"))
-        except Exception:
-            pass
+            flags.append(("warning", f"{act_count} repos use GitHub Actions — document all Actions "
+                          "secrets and environment variables before migration"))
+        if outside:
+            flags.append(("error", f"{len(outside)} outside collaborator(s) detected — "
+                          "cannot migrate to EMU; must convert to org members or remove"))
+        if app_count > 0:
+            flags.append(("warning", f"{app_count} GitHub App(s) installed — verify EMU org "
+                          "compatibility for each (Datadog, Snyk, etc.)"))
 
         if not flags:
             st.success("No critical risk flags detected.")
@@ -270,12 +342,11 @@ if st.session_state.connected:
     # Section 5: Runbook Generator
     st.subheader("Migration Runbook Generator")
     if st.button("Generate Migration Runbook"):
-        if st.session_state.repo_df is None:
-            st.warning("Fetch the repository inventory first.")
+        if df is None:
+            st.warning("Load the repository inventory first.")
         else:
-            df = st.session_state.repo_df
             flags = st.session_state.risk_flags or []
-            tdf = st.session_state.team_df
+            tdf_local = st.session_state.team_df
 
             low_risk = df[
                 (df["Has Actions"] == "No") & (df["Has Webhooks"] == "No") & (df["Archived"] == "No")
@@ -283,47 +354,51 @@ if st.session_state.connected:
             wh_repos = df[df["Has Webhooks"] == "Yes"]["Repo"].tolist()
             act_repos = df[df["Has Actions"] == "Yes"]["Repo"].tolist()
 
-            flag_lines = "\n".join([f"- {msg}" for _, msg in flags]) if flags else "- No critical flags detected"
+            flag_lines = "\n".join([f"- [{sev.upper()}] {msg}" for sev, msg in flags]) if flags else "- No critical flags detected"
             team_lines = (
                 "\n".join([f"- {r['Team']} ({r['Members']} members, {r['Repos']} repos)"
-                           for _, r in tdf.iterrows()])
-                if tdf is not None and not tdf.empty
-                else "- No team data fetched"
+                           for _, r in tdf_local.iterrows()])
+                if tdf_local is not None and not tdf_local.empty
+                else "- No team data loaded"
             )
 
             runbook = (
                 f"# GitHub EMU Migration Runbook\n"
-                f"**Organization:** {org}\n\n---\n\n"
+                f"**Organization:** {org}  \n"
+                f"**Repo sample:** {len(df)} repos shown ({len(df[df['Visibility']=='public'])} public, "
+                f"{len(df[df['Archived']=='Yes'])} archived)\n\n---\n\n"
                 f"## Phase 1 — Pre-Flight\n**Owner:** IT Ops\n\n{flag_lines}\n\n"
                 f"## Phase 2 — EMU Org Setup\n"
                 f"- Create new EMU GitHub organization\n"
                 f"- Configure SAML SSO (connect to Okta or IdP)\n"
-                f"- Configure SCIM provisioning\n"
+                f"- Configure SCIM provisioning and test user sync\n"
                 f"- Test with 1–2 pilot users end-to-end\n"
-                f"- Validate group sync from IdP\n\n"
-                f"## Phase 3 — Repository Migration\n"
-                f"Migrate lowest-risk repos first (no Actions, no webhooks):\n"
+                f"- Validate group sync from IdP to GitHub teams\n\n"
+                f"## Phase 3 — Repository Migration (Low-Risk First)\n"
+                f"Repos with no Actions and no webhooks:\n"
                 + ("\n".join([f"- {r}" for r in low_risk]) if low_risk else "- N/A")
-                + f"\n\nBatch remaining repos by team ownership using GitHub Enterprise Importer (GEI).\n\n"
+                + f"\n\nUse GitHub Enterprise Importer (GEI) tool for bulk migration.\n\n"
                 f"## Phase 4 — Team & Access Migration\n{team_lines}\n\n"
                 f"## Phase 5 — Webhook Remediation\n"
+                f"Repos requiring webhook recreation in EMU org:\n"
                 + ("\n".join([f"- {r}" for r in wh_repos]) if wh_repos else "- None")
                 + f"\n\n## Phase 6 — Actions Secrets Migration\n"
+                f"Repos requiring Actions secret/env var documentation:\n"
                 + ("\n".join([f"- {r}" for r in act_repos]) if act_repos else "- None")
                 + f"\n\n## Phase 7 — Outside Collaborator Resolution\n"
-                f"- Convert to org member (invite to EMU org via SCIM)\n"
-                f"- Remove if no longer needed\n"
-                f"- Create external collaboration policy in EMU org\n\n"
+                f"- Convert to org member (invite to EMU org via SCIM provisioning)\n"
+                f"- Remove if access no longer required\n"
+                f"- Document exceptions in access review ticket\n\n"
                 f"## Phase 8 — Cutover & Validation\n"
-                f"- Verify all repos migrated and accessible\n"
-                f"- Validate CI/CD pipelines running\n"
+                f"- Confirm all repos migrated and accessible\n"
+                f"- Validate CI/CD pipelines running in EMU org\n"
                 f"- Confirm SSO login for all users\n"
-                f"- Test webhook endpoints\n"
-                f"- Check Actions secrets in new org\n\n"
+                f"- Test webhook endpoints with payload delivery\n"
+                f"- Verify Actions secrets in new org\n\n"
                 f"## Phase 9 — Decommission Source Org\n"
                 f"- Archive all repos in source org\n"
-                f"- Notify all teams of new org URL\n"
-                f"- Update internal documentation\n"
+                f"- Communicate new org URL to all teams\n"
+                f"- Update internal documentation and bookmarks\n"
                 f"- Cancel or downgrade source org plan after 30-day retention window\n"
             )
 
@@ -337,7 +412,7 @@ if st.session_state.connected:
 
 else:
     st.title("GitHub EMU Toolkit")
-    st.info("Enter your GitHub organization and PAT in the sidebar, then click Connect.")
+    st.info("Enable **Demo mode** in the sidebar (on by default) or enter your GitHub org and PAT to connect.")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("Built by [Oleg Strutsovski](https://linkedin.com/in/olegst)")
