@@ -1,11 +1,11 @@
 """
-Mock dataset representing a Life360-scale GitHub org (~2,300 repos, 600 members).
+Mock dataset representing an enterprise-scale GitHub org (~2,300 repos, 600 members).
 Used in demo mode — no PAT required.
 """
 
 MOCK_ORG = {
-    "login": "life360-demo",
-    "name": "Life360 (Demo)",
+    "login": "acme-corp-demo",
+    "name": "Acme Corp (Demo)",
     "public_repos": 12,
     "total_private_repos": 38,
     "description": "Demo org — representative sample of a 600-user, 2,300-repo EMU migration",

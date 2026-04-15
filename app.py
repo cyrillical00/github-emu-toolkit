@@ -203,7 +203,7 @@ if st.session_state.connected:
     if is_demo:
         st.info(
             "**Demo mode** — showing a representative 50-repo sample modelled on a 600-user, "
-            "2,300-repo Life360-scale migration. Toggle off in the sidebar to connect a real org."
+            "2,300-repo enterprise-scale migration. Toggle off in the sidebar to connect a real org."
         )
 
     # Section 2: Repository Inventory
