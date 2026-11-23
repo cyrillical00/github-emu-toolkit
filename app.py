@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import requests
 import pandas as pd
@@ -26,6 +27,7 @@ else:
     connect = True
 
 BASE_URL = "https://api.github.com"
+ORG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$")
 
 
 def gh_headers(token):
@@ -163,6 +165,8 @@ if connect:
     else:
         if not org_input or not token_input:
             st.sidebar.error("Enter org name and PAT.")
+        elif not ORG_RE.match(org_input):
+            st.sidebar.error("Invalid organization name.")
         else:
             with st.spinner("Connecting to GitHub..."):
                 try:
