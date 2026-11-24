@@ -28,14 +28,15 @@ streamlit run app.py
 ## CLI
 
 ```bash
-python main.py --org my-org --token ghp_xxx --output-dir ./emu-output
+export GITHUB_TOKEN=REPLACE_WITH_YOUR_TOKEN   # or omit and enter it at the hidden prompt
+python main.py --org my-org --output-dir ./emu-output
 ```
 
 Outputs: `inventory.csv`, `team_map.csv`, `risk_flags.txt`, `migration_runbook.md`
 
 ## Token Scopes Required
 
-Classic PAT with: `repo`, `admin:org`, `read:org`
+Classic PAT with: `repo`, `admin:org`, `read:org`. The tool only reads, so prefer a fine-grained read-only token where it covers the endpoints you need. The CLI reads the token from `GITHUB_TOKEN` or a hidden prompt; there is no `--token` argument (it would show up in `ps` and shell history).
 
 ## Deploy to Streamlit Cloud
 

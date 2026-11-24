@@ -1,18 +1,38 @@
 #!/usr/bin/env python3
 """
 GitHub EMU Toolkit — CLI
-Usage: python main.py --org <org> --token <token> --output-dir <dir>
+Usage: GITHUB_TOKEN=<token> python main.py --org <org> --output-dir <dir>
+       (if GITHUB_TOKEN is unset you are prompted; the token is never a CLI argument)
 
 Exports: inventory.csv, team_map.csv, risk_flags.txt, migration_runbook.md
 """
 
 import argparse
 import csv
+import getpass
 import os
+import re
+import sys
 import time
 import requests
 
 BASE_URL = "https://api.github.com"
+
+# GitHub org logins: alphanumerics and single hyphens (EMU orgs may use underscores for shortcodes).
+ORG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$")
+
+
+def read_token():
+    """Read the PAT from GITHUB_TOKEN, else prompt without echo. Never from argv."""
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if not token:
+        try:
+            token = getpass.getpass("GitHub PAT (input hidden): ").strip()
+        except EOFError:
+            token = ""
+    if not token:
+        sys.exit("A GitHub token is required (set GITHUB_TOKEN or enter it at the prompt).")
+    return token
 
 
 def headers(token):
@@ -74,9 +94,11 @@ def fetch_teams(org, token):
 def main():
     parser = argparse.ArgumentParser(description="GitHub EMU Toolkit CLI")
     parser.add_argument("--org", required=True, help="GitHub organization name")
-    parser.add_argument("--token", required=True, help="GitHub PAT (classic, repo + admin:org scopes)")
     parser.add_argument("--output-dir", default="./emu-output", help="Output directory")
     args = parser.parse_args()
+    if not ORG_RE.match(args.org):
+        sys.exit("Invalid organization name.")
+    args.token = read_token()
 
     os.makedirs(args.output_dir, exist_ok=True)
     print(f"Connecting to org: {args.org}")
